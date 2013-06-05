@@ -58,6 +58,7 @@ define(['hessian/hessianEncoder', 'hessian/hessianPost', 'hessian/hessianDecoder
 		done : function(hessianResponse) {
 			//Decode the hessian response to a javascript object
 			var decodedResponse = decoder.decode(hessianResponse);
+			hessianResponse = null; //We no longer need the hessian response. Mark for collection
 			//Send the javascript decoded object to the callback, on success
 			done(decodedResponse);
 		},

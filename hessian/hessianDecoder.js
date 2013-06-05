@@ -39,7 +39,8 @@ define(['hessian/util'], function(HessianUtil) {
 				var stringLength = workingBuffer[currentOffset];
 				var stringBuffer = new Uint32Array(workingBuffer.subarray(currentOffset + 1, currentOffset + stringLength + 1));
 				var deserializedString = String.fromCharCode.apply(null, stringBuffer);
-
+				stringBuffer = null;
+				workingBuffer = null;
 				return {length : stringLength + 1,
 				value : deserializedString,
 				type : 'string',
@@ -54,7 +55,7 @@ define(['hessian/util'], function(HessianUtil) {
 				var currentLenght = workingBuffer[currentOffset] - 0x20;
 				currentOffset++;
 				var bytes = new Uint8Array(workingBuffer.subarray(currentOffset, currentOffset + currentLenght));
-
+				workingBuffer = null;
 				return {length : currentLenght + 1,
 				value : bytes,
 				type : 'binary',
@@ -70,6 +71,9 @@ define(['hessian/util'], function(HessianUtil) {
 				//Read all the bytes from the current offset (plus two bytes)
 				var stringBuffer = new Uint32Array(workingBuffer.subarray(currentOffset + 2, currentOffset + stringLength + 2));
 				var deserializedString = String.fromCharCode.apply(null, stringBuffer);
+
+				stringBuffer = null;
+				workingBuffer = null;
 				return {length : stringLength + 2,
 				value : deserializedString,
 				type : 'string',
@@ -191,8 +195,26 @@ define(['hessian/util'], function(HessianUtil) {
 						+ " address 0x" + currentOffset.toString(16));
 			break;
 			case (workingBuffer[currentOffset] === 0x48) :
-				throw new Error("untyped map ('H') data type is not implemented. value 0x" + workingBuffer[currentOffset].toString(16)
-						+ " address 0x" + currentOffset.toString(16));
+				/*
+				 * # untyped map ('H') 
+				 */
+				currentOffset++;
+				var map = [];
+				var mapLength = 1;
+				var nextIndex = hessianDeserialize(workingBuffer, currentOffset);
+				while (nextIndex.type != "terminator") {
+					var nextValue = hessianDeserialize(workingBuffer, currentOffset + nextIndex.length);
+					map[nextIndex.value] = nextValue.value;
+					console.log(map);
+					currentOffset = currentOffset + nextIndex.length + nextValue.length;
+					mapLength = mapLength + nextIndex.length + nextValue.length;
+					nextIndex = hessianDeserialize(workingBuffer, currentOffset);
+				}
+				return {length : mapLength,
+				value : map,
+				type : 'map',
+				encodedAs : "untyped map ('H') "
+				};
 			break;
 			case (workingBuffer[currentOffset] === 0x49) :
 				/*
@@ -205,7 +227,7 @@ define(['hessian/util'], function(HessianUtil) {
 				var intValueBuffer = new Uint32Array(byteBuffer.buffer);
 
 				var intValue = HessianUtil.swapInt32Endianness(intValueBuffer[0]);
-				
+
 				return {length : 5,
 				value : intValue,
 				type : 'number',
@@ -229,8 +251,14 @@ define(['hessian/util'], function(HessianUtil) {
 						+ " address 0x" + currentOffset.toString(16));
 			break;
 			case (workingBuffer[currentOffset] === 0x4e) :
-				throw new Error("null ('N') data type is not implemented. value 0x" + workingBuffer[currentOffset].toString(16)
-						+ " address 0x" + currentOffset.toString(16));
+				/*
+				 * # null ('N')
+				 */
+				return {length : 1,
+				value : null,
+				type : 'null',
+				encodedAs : "null ('N')"
+				};
 			break;
 			case (workingBuffer[currentOffset] === 0x4f) :
 				throw new Error("object instance ('O') data type is not implemented. value 0x" + workingBuffer[currentOffset].toString(16)
@@ -241,8 +269,16 @@ define(['hessian/util'], function(HessianUtil) {
 						+ " address 0x" + currentOffset.toString(16));
 			break;
 			case (workingBuffer[currentOffset] === 0x51) :
-				throw new Error("reference to map/list/object - integer ('Q') data type is not implemented. value 0x"
-						+ workingBuffer[currentOffset].toString(16) + " address 0x" + currentOffset.toString(16));
+				/*
+				 * # reference to map/list/object - integer ('Q')
+				 */
+				currentOffset++;
+				var reference = hessianDeserialize(workingBuffer, currentOffset);
+				return {length : 1 + reference.length,
+				value : reference.value,
+				type : 'reference',
+				encodedAs : "reference to map/list/object - integer ('Q')"
+				};
 			break;
 			case (workingBuffer[currentOffset] === 0x52) :
 				throw new Error("utf-8 string non-final chunk ('R') data type is not implemented. value 0x"
@@ -261,8 +297,47 @@ define(['hessian/util'], function(HessianUtil) {
 						+ workingBuffer[currentOffset].toString(16) + " address 0x" + currentOffset.toString(16));
 			break;
 			case (workingBuffer[currentOffset] === 0x56) :
-				throw new Error("fixed-length list/vector ('V') data type is not implemented. value 0x"
-						+ workingBuffer[currentOffset].toString(16) + " address 0x" + currentOffset.toString(16));
+				/*
+				 * fixed-length list/vector ('V')
+				 */
+				console.log("fixed length list/vector V");
+
+				var newList = [];
+				var listLength = 1;//The length in bytes for the current object
+				//
+				currentOffset++;
+				var listType = hessianDeserialize(workingBuffer, currentOffset);
+				currentOffset += listType.length;
+				listLength += listType.length;
+				var numberOfItems = hessianDeserialize(workingBuffer, currentOffset);
+				currentOffset += numberOfItems.length;
+				listLength += numberOfItems.length;
+
+				for ( var i = 0; i < numberOfItems.value; i++) {
+					newItem = hessianDeserialize(workingBuffer, currentOffset);
+					console.log(newItem);
+					newList.push(newItem.value);
+					currentOffset += newItem.length;
+					listLength += newItem.length;
+				}
+
+				var lastElement = hessianDeserialize(workingBuffer, currentOffset);
+				currentOffset += lastElement.length;
+				listLength += lastElement.length;
+				//I'll be expecting the last element of the list would be a terminator, however, the spec is not clear in this point, so
+				//This check might be not necesary
+				if (lastElement.type != 'terminator') {
+					throw new Error("Last element in list is not a terminator. value 0x" + workingBuffer[currentOffset].toString(16)
+							+ " address 0x" + currentOffset.toString(16));
+				}
+				newList.type = listType;
+				newList.length = numberOfItems;
+
+				return {length : listLength,
+				value : newList,
+				type : 'list',
+				encodedAs : "fixed-length list/vector ('V')"
+				};
 			break;
 			case (workingBuffer[currentOffset] === 0x57) :
 				throw new Error("variable-length untyped list/vector ('W') data type is not implemented. value 0x"
@@ -337,6 +412,10 @@ define(['hessian/util'], function(HessianUtil) {
 				var currentLength = 1;
 				while (currentOffset < workingBuffer.length) {
 					var newObject = hessianDeserialize(workingBuffer, currentOffset);
+					//Not sure where I need to break the serialization of an object.
+					//					if (newObject.type === 'object' || newObject.type==='terminator'){//means that another object is found, so, we break the cycle for avoiding recursive objects
+					//						break;
+					//					}
 					values.push(newObject);
 					currentOffset += newObject.length;
 					currentLength += newObject.length;
@@ -384,7 +463,7 @@ define(['hessian/util'], function(HessianUtil) {
 				value : intValue,
 				type : 'number',
 				encodedAs : "one-octet compact int (-0x10 to 0x3f, 0x90 is 0)"
-				};				
+				};
 			break;
 			case (0xc0 <= workingBuffer[currentOffset] && workingBuffer[currentOffset] <= 0xcf) :
 				/*
@@ -427,7 +506,7 @@ define(['hessian/util'], function(HessianUtil) {
 	}
 
 	/*
-	 * eserialization of the RPC envelopes and messages from the hessian Web services protocol
+	 * Serialization of the RPC envelopes and messages from the hessian Web services protocol
 	 * So far, I only added support for those types I needed, but every time the parser founds an unsupported type, will let you know.
 	 * Implementing new types is not that hard if you follow the spec (most of the times).
 	 * 
@@ -464,8 +543,14 @@ define(['hessian/util'], function(HessianUtil) {
 						+ " address 0x" + currentOffset.toString(16));
 			break;
 			case (workingBuffer[currentOffset] === 0x46) :
-				throw new Error("fault ('F') data type is not implemented. value 0x" + workingBuffer[currentOffset].toString(16)
-						+ " address 0x" + currentOffset.toString(16));
+				/*
+				 * # Hessian fault ('F')
+				 * Parse the next value, wich are a map containint the error information
+				 */
+				currentOffset++;
+				var error = hessianDeserialize(workingBuffer, currentOffset);
+				console.error(error);
+				throw new Error("Hessian responsed with an error");
 			break;
 			case (workingBuffer[currentOffset] === 0x47) :
 				throw new Error("reserved data type is not implemented. value 0x" + workingBuffer[currentOffset].toString(16)
