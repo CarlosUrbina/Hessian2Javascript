@@ -5,68 +5,86 @@
  * @date 2013/05/23, 14:39
  */
 
-define(function() {
-	function configurationException(message) {
-		throw new Error(message + " missing from configuration object");
-	}
+define(['jquery','app/Utilities'], function($,Util) {
+    function configurationException(message) {
+	throw new Error(message + " missing from configuration object");
+    }
 
-	/*
-	 * Create a XMLHttpRequest with responseType = ArrayBuffer.
-	 * @returns On success, returns the binary response, along with the progress object and the request itself, for tracking purposes
-	 */
-	function post(config) {
-		var request = new XMLHttpRequest();
+    /*
+     * Create a XMLHttpRequest with responseType = ArrayBuffer.
+     * @returns A promise object. On success, returns the binary response
+     */
+    function post(config) {
+	var request = new XMLHttpRequest();
 
-		if (config) {
-			var url = config.url || configurationException("url");
-			var done = config.done || configurationException("callback function");
-			var timeout = config.timeout || 10000;
-			var data;
-			if (config.data) {
-				data = config.data;
-			}
-			else {
-				data = null;
-				console.warn('No data is specified in hessianPost');
-			}
+	var deferred = $.Deferred();
+	var promise = deferred.promise();
+	//We need to extend the functionality of the promise by returning an abort method
+	promise.abort = function() {
+	    console.warn("Request aborted");
+	    request.abort();
+	};
 
-			var fail = config.fail || function(progressEvent) {
-				/*
-				 * Please note that, because we are specifying the response type as ArrayBuffer, any unsuccessful response cannot be parsed
-				 * The progress event always return with status 0, statusText = "" and responseText: [Exception: DOMException], so, there's not
-				 * so much useful information to be showed here. The same thing applies to progress monitoring. Therefore, I did not include
-				 * any onprogress or onreadystatechange events. There's no really to helpful information there
-				 */
-				throw new Error("Hessian Request failed");
-			};
+	if (config) {
+	    var url = config.url || configurationException("url");
+	    var timeout = config.timeout || 10000;
+	    var data;
+	    if (config.data) {
+		data = config.data;
+	    }
+	    else {
+		data = null;
+		console.warn('No data is specified in hessianPost');
+	    }
 
-			request.open("POST", url, true);
-			request.timeout = timeout;
-			request.responseType = "arraybuffer"; //This way, we don't have to convert anything in the response
-			request.setRequestHeader("Content-Type", "x-application/hessian;"); //Hessian web services in java often throw an error if the Content type is not the appropiate. So we overwrite it 
+	    /*
+	     * Please note that, because we are specifying the response type as ArrayBuffer, any unsuccessful response cannot be parsed
+	     * The progress event always return with status 0, statusText = "" and responseText: [Exception: DOMException], so, there's not
+	     * so much useful information to be showed here. The same thing applies to progress monitoring. Therefore, I did not include
+	     * any onprogress or onreadystatechange events. There's no really to helpful information there
+	     */
 
-			//Here, we catch the response
-			request.onload = function(progressObj) {
-				if (progressObj.currentTarget.status === 200) {
-					var arrayBuffer = request.response; // Note: not oReq.responseText
-					if (arrayBuffer) {
-						var byteArray = new Uint8Array(arrayBuffer);
-						done(byteArray, progressObj, request);//Execute callback, with different info about the request
-					}
-				}
-			};
-			request.ontimeout = function(progressEvent) {
-				throw new Error("Hessian Request timed out");
-			};
-			request.onerror = fail;
 
-			request.send(data);
+	    request.open("POST", url, true);
+	    request.timeout = timeout;
+	    request.responseType = "arraybuffer"; //This way, we don't have to convert anything in the response
+
+	    //Here, we catch the response. This is a callback, not the actual send method
+	    request.onload = function(progressObj) {
+		if (progressObj.currentTarget.status === 200) {
+		    var arrayBuffer = request.response; // Note: not oReq.responseText
+		    if (arrayBuffer) {
+			var byteArray = new Uint8Array(arrayBuffer);
+			//This line sets an artificial delay, just for debugging purposes
+			//setTimeout(function(){deferred.resolve(byteArray)}, 3*1000);			
+			deferred.resolve(byteArray);
+		    }
 		}
 		else {
-			throw new Error("Configuration object is missing");
+		    //If return code is not succesful
+		    deferred.reject(url + " | Code> " + progressObj.currentTarget.status + " " + progressObj.currentTarget.statusText);
 		}
+	    };
+	    //Handlers for all the posible errors
+	    request.ontimeout = function(progressEvent) {
+		deferred.reject("Timeout");
+	    };
+	    request.onerror = function() {
+		deferred.reject("Error");
+	    };
+	    request.onabort = function() {
+		deferred.reject("Abort");
+	    };
+	    //Here we actually send the request
+	    request.send(data);
 	}
+	else {
+	    deferred.reject("Configuration object is missing");
+	}
+	//Note how is important to return the promise.
+	return promise;
+    }
 
-	return {post : post
-	};
+    return {post: post
+    };
 });
